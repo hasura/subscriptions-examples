@@ -14,10 +14,12 @@ import jakarta.websocket.WebSocketContainer;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.http.WebSocket;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
@@ -192,8 +194,9 @@ public class Application {
     // Uncomment one of the below to run an example
     public static void main(String[] args) {
         Application app = new Application();
-        app.vertxTest();
-        app.jakartaEETest();
+        // app.vertxTest();
+        // app.jakartaEETest();
+        app.testVanillaJDKWebsocket();
     }
 
     private static final String url = "ws://localhost:8080/v1/graphql";
@@ -210,6 +213,111 @@ public class Application {
                    }
             """;
 
+    // Example of a graphql-transport-ws client using the vanilla JDK websocket implementation
+    public void testVanillaJDKWebsocket() {
+        System.out.println("Starting vanilla JDK websocket test");
+        ObjectMapper mapper = new ObjectMapper().registerModule(new Jdk8Module());
+
+        java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+        WebSocket websocket = client.newWebSocketBuilder()
+                .subprotocols("graphql-transport-ws")
+                .buildAsync(URI.create(url), new WebSocket.Listener() {
+                    StringBuilder text = new StringBuilder();
+
+                    @Override
+                    public void onOpen(WebSocket webSocket) {
+                        System.out.println("Opened");
+                        // You MUST call super.onOpen() or else no data will be sent
+                        WebSocket.Listener.super.onOpen(webSocket);
+                        try {
+                            webSocket.sendText(
+                                    mapper.writeValueAsString(new GraphQLWSClientToServerMessage.ConnectionInit(Optional.empty())),
+                                    true
+                            );
+                        } catch (JsonProcessingException e) {
+                            e.printStackTrace();
+                        }
+                    }
+
+                    @Override
+                    public CompletionStage<?> onText(WebSocket webSocket,
+                                                     CharSequence message,
+                                                     boolean last) {
+                        text.append(message);
+                        if (last) {
+                            processWholeText(text);
+                            text = new StringBuilder();
+                        }
+                        webSocket.request(1);
+                        return null;
+                    }
+
+                    private void processWholeText(CharSequence parts) {
+                        String wholeText = parts.toString();
+                        System.out.println("wholeText: " + wholeText);
+                        try {
+                            GraphQLWSMessage message = mapper.readValue(wholeText, GraphQLWSMessage.class);
+                            handleGraphQLMessage(message);
+                        } catch (JsonProcessingException e) {
+                            e.printStackTrace();
+                        }
+                    }
+
+                    private void handleGraphQLMessage(GraphQLWSMessage message) {
+                        switch (message) {
+                            case GraphQLWSBidirectionalMessage.Ping ping -> {
+                                System.out.println("[VANILLA] Ping received");
+                                System.out.println(ping);
+                            }
+                            case GraphQLWSBidirectionalMessage.Complete complete -> {
+                                System.out.println("[VANILLA] Complete received");
+                                System.out.println(complete);
+                            }
+                            case GraphQLWSServerToClientMessage.ConnectionAck connectionAck -> {
+                                System.out.println("[VANILLA] ConnectionAck received");
+                                System.out.println(connectionAck);
+                            }
+                            case GraphQLWSServerToClientMessage.Error error -> {
+                                System.out.println("[VANILLA] Error received");
+                                System.out.println(error);
+                            }
+                            case GraphQLWSServerToClientMessage.Next data -> {
+                                System.out.println("[VANILLA] Data received");
+                                System.out.println(data);
+                            }
+                            default -> throw new IllegalStateException("Unexpected value: " + message);
+                        }
+                    }
+                }).join();
+
+        try {
+            websocket.sendText(
+                    mapper.writeValueAsString(
+                            new GraphQLWSClientToServerMessage.Subscribe(
+                                    UUID.randomUUID().toString(),
+                                    new GraphQLWSClientToServerMessage.Subscribe.SubscribePayload(
+                                            Optional.empty(),
+                                            subscription,
+                                            Optional.empty(),
+                                            Optional.empty()
+                                    )
+                            )
+                    ), true);
+        } catch (JsonProcessingException e) {
+            e.printStackTrace();
+        }
+
+        while (!websocket.isInputClosed()) {
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+
+    }
+
+    // Example of a graphql-transport-ws client using Jakarta EE WebSocket API
     public void jakartaEETest() {
         final WebSocketContainer webSocketContainer = ContainerProvider.getWebSocketContainer();
         try {
@@ -231,6 +339,7 @@ public class Application {
         }
     }
 
+    // Implementation of a graphql-transport-ws client using Vert.x HTTP Client + WebSocket API
     public void vertxTest() {
         Vertx vertx = Vertx.vertx();
         ObjectMapper mapper = new ObjectMapper().registerModule(new Jdk8Module());
