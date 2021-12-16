@@ -194,8 +194,8 @@ public class Application {
     // Uncomment one of the below to run an example
     public static void main(String[] args) {
         Application app = new Application();
-        // app.vertxTest();
-        // app.jakartaEETest();
+        app.vertxTest();
+        app.jakartaEETest();
         app.testVanillaJDKWebsocket();
     }
 
